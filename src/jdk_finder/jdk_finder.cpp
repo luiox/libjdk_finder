@@ -46,6 +46,34 @@ int runQuiet(const std::string& command)
     return std::system(command.c_str());
 }
 
+///枚举 <root> 下「版本/发行版」两层子目录中的 vcvarsall.bat（清单兜底）。
+/// VS 版本目录名随发布演进（2017/2019/2022/…/18），静态年份清单会滞后，
+/// 对目录名做开放枚举使其对未来 VS 版本免疫；命中即返回（不判新旧）。
+fs::path vcvarsByEnumerate(const fs::path& root)
+{
+    std::error_code ec;
+    fs::directory_iterator it(root, ec), end;
+    if (ec) return {};
+    while (it != end) {
+        std::error_code subEc;
+        if (it->is_directory(subEc)) {
+            fs::directory_iterator ed(it->path(), subEc), edEnd;
+            while (!subEc && ed != edEnd) {
+                const fs::path candidate =
+                    ed->path() / "VC" / "Auxiliary" / "Build" / "vcvarsall.bat";
+                if (fileExists(candidate)) return candidate;
+                std::error_code edEc;
+                ed.increment(edEc);
+                if (edEc) break;
+            }
+        }
+        std::error_code incEc;
+        it.increment(incEc);
+        if (incEc) break;
+    }
+    return {};
+}
+
 }   //anonymous namespace
 
 bool commandExists(const std::string& command)
@@ -158,6 +186,10 @@ fs::path findVcvarsAll()
                 if (fileExists(vcvars)) return vcvars;
             }
         }
+        // 静态清单未命中（如 VS 2026 起版本目录名不在清单内）→ 枚举兜底。
+        if (auto scanned = vcvarsByEnumerate(root / "Microsoft Visual Studio");
+            !scanned.empty())
+            return scanned;
     }
     return {};
 #else

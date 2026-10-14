@@ -82,7 +82,7 @@ NativeToolchain findNativeCompiler(CCompilerKind requested = CCompilerKind::Auto
 ///定位 VS 的 vcvarsall.bat（Windows）。
 ///顺序：VCToolsInstallDir 环境变量 → ProgramFiles/ProgramFiles(x86) 下
 ///Microsoft Visual Studio/{2022,2019,2017}/{Community,Professional,Enterprise,BuildTools}
-///扫描。
+///扫描 → 该目录下「版本/发行版」开放式枚举兜底（覆盖未来 VS 版本目录名）。
 ///非 Windows 或未找到返回空 path。
 fs::path findVcvarsAll();
 
