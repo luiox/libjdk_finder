@@ -7,11 +7,14 @@
 //零外部依赖（仅 std + libca），可被任意产品库和 test_helper 共用，避免探测逻辑
 //在产品代码与测试代码各写一份。
 //
+//命名约定对齐 libca：类型 PascalCase，函数与结构体成员 snake_case，
+//公开枚举值 SCREAMING_SNAKE_CASE。
+//
 //设计要点：
-//- JDK 发现顺序：JAVA_HOME → MJT_JDK_HOME → fallbackHomes（调用方注入）
+//- JDK 发现顺序：JAVA_HOME → MJT_JDK_HOME → fallback_homes（调用方注入）
 //不再硬编码作者机器路径；CI 靠 JAVA_HOME，本机开发可设 MJT_JDK_HOME。
 //- 可执行文件双探测：先 <bin>/<name>.exe 再 <bin>/<name>（跨平台友好）。
-//- JNI 头校验可选：纯 JVM 用途不要求 jni.h；--compile 等 native 用途要求。
+//- JNI 头校验可选：纯 JVM 用途不要求 jni.h；native 编译用途要求。
 
 #pragma once
 
@@ -30,38 +33,38 @@ struct JdkLocation
 {
     bool        available = false;
     std::string reason;
-    fs::path    javaHome;
-    fs::path    jdkInclude;     //<home>/include
-    fs::path    jdkIncludePlat; //<home>/include/{win32|darwin|linux}
+    fs::path    java_home;
+    fs::path    jdk_include;       //<home>/include
+    fs::path    jdk_include_plat;  //<home>/include/{win32|darwin|linux}
 };
 
-///findJdk 的可选配置。
+///find_jdk 的可选配置。
 struct FindOptions
 {
     ///JAVA_HOME / MJT_JDK_HOME 都没命中时的额外回落候选（按顺序尝试）。
-    std::vector<fs::path> fallbackHomes;
+    std::vector<fs::path> fallback_homes;
     ///是否要求 <jdk>/include/jni.h 存在。默认 false：纯 JVM 用途不需要。
     ///native 编译（--compile）设 true。
-    bool requireJniHeader = false;
+    bool require_jni_header = false;
 };
 
-///探测 JDK：JAVA_HOME → MJT_JDK_HOME → opts.fallbackHomes。
+///探测 JDK：JAVA_HOME → MJT_JDK_HOME → opts.fallback_homes。
 ///命中需存在 bin/javac(.exe)（视为合法 JDK 安装的标志）。
-///requireJniHeader=true 时额外校验 <jdk>/include/jni.h。
-JdkLocation findJdk(const FindOptions& opts = {});
+///require_jni_header=true 时额外校验 <jdk>/include/jni.h。
+JdkLocation find_jdk(const FindOptions& opts = {});
 
 ///在已定位的 JDK 下解析可执行文件绝对路径（双探测 .exe / 无后缀）。
 ///name 形如 "javac" / "java"（不带后缀）。找不到返回空 path。
-fs::path jdkExecutable(const JdkLocation& jdk, const std::string& name);
+fs::path jdk_executable(const JdkLocation& jdk, const std::string& name);
 
 ///原生 C 编译器种类。
 enum class CCompilerKind
 {
-    Auto,
-    Msvc,
-    Gcc,
-    Clang,
-    Zig,
+    AUTO,
+    MSVC,
+    GCC,
+    CLANG,
+    ZIG,
 };
 
 ///探测到的原生工具链。
@@ -69,24 +72,24 @@ struct NativeToolchain
 {
     bool           available = false;
     std::string    reason;
-    CCompilerKind  compiler = CCompilerKind::Auto;
-    fs::path       vcvarsAll;   //仅 MSVC：vcvarsall.bat 路径（INCLUDE 环境未配置时需要）
+    CCompilerKind  compiler = CCompilerKind::AUTO;
+    fs::path       vcvars_all;  //仅 MSVC：vcvarsall.bat 路径（INCLUDE 环境未配置时需要）
 };
 
-///探测原生 C 编译器。requested=Auto 时按平台默认顺序探测。
+///探测原生 C 编译器。requested=AUTO 时按平台默认顺序探测。
 ///Windows：MSVC（cl 在 PATH 或 vcvarsall 可定位）→ clang → gcc → Zig
 ///macOS：clang → gcc → Zig
 ///Linux：gcc → clang → Zig
-NativeToolchain findNativeCompiler(CCompilerKind requested = CCompilerKind::Auto);
+NativeToolchain find_native_compiler(CCompilerKind requested = CCompilerKind::AUTO);
 
 ///定位 VS 的 vcvarsall.bat（Windows）。
 ///顺序：VCToolsInstallDir 环境变量 → ProgramFiles/ProgramFiles(x86) 下
 ///Microsoft Visual Studio/{2022,2019,2017}/{Community,Professional,Enterprise,BuildTools}
 ///扫描 → 该目录下「版本/发行版」开放式枚举兜底（覆盖未来 VS 版本目录名）。
 ///非 Windows 或未找到返回空 path。
-fs::path findVcvarsAll();
+fs::path find_vcvars_all();
 
-///检查命令是否在 PATH 中可用（where / command -v）。
-bool commandExists(const std::string& command);
+///检查命令是否在 PATH 中可用（Windows 走 where，POSIX 走 sh -c 'command -v'）。
+bool command_exists(const std::string& command);
 
 }   //namespace jdk_finder
