@@ -1,34 +1,26 @@
-//jdk_finder.cpp — JDK 与原生工具链探测实现
+//jdk_finder.cpp — JDK 定位、默认安装位置扫描与 java 信息查询
 
 #include "jdk_finder/jdk_finder.hpp"
+#include "jdk_finder/detail.hpp"
 
-#include <cstdlib>
-#include <system_error>
+#include <cctype>
+#include <cstddef>
+#include <cstring>
+#include <sstream>
+#include <string>
+#include <vector>
+
+#include "libca/fs/file_util.hpp"
+
+#ifdef _WIN32
+#    include <windows.h>
+#endif
 
 namespace jdk_finder {
+
+namespace fs = std::filesystem;
+
 namespace {
-
-///跨平台读环境变量（Windows 用 _dupenv_s 避免CRT警告，POSIX 用 getenv）。
-std::string env_value(const char* name)
-{
-#ifdef _WIN32
-    char*  value = nullptr;
-    size_t size  = 0;
-    if (_dupenv_s(&value, &size, name) != 0 || value == nullptr) return {};
-    std::string result(value);
-    std::free(value);
-    return result;
-#else
-    const char* value = std::getenv(name);
-    return value == nullptr ? std::string() : std::string(value);
-#endif
-}
-
-bool file_exists(const fs::path& p)
-{
-    std::error_code ec;
-    return fs::exists(p, ec);
-}
 
 fs::path platform_include_subdir()
 {
@@ -41,91 +33,151 @@ fs::path platform_include_subdir()
 #endif
 }
 
-int run_quiet(const std::string& command)
+///用户主目录。Windows 取 USERPROFILE，其余平台取 HOME。空 path 表示均未设置。
+fs::path user_home()
 {
-    return std::system(command.c_str());
+#ifdef _WIN32
+    fs::path profile = detail::env_path("USERPROFILE");
+    if (!profile.empty()) return profile;
+#endif
+    return detail::env_path("HOME");
 }
 
-///枚举 <root> 下「版本/发行版」两层子目录中的 vcvarsall.bat（清单兜底）。
-/// VS 版本目录名随发布演进（2017/2019/2022/…/18），静态年份清单会滞后，
-/// 对目录名做开放枚举使其对未来 VS 版本免疫；命中即返回（不判新旧）。
-fs::path vcvars_by_enumerate(const fs::path& root)
+///~/.jdk 本身与其一级子目录：前者对应单装（bin/javac 直接在根下），
+///后者对应多 JDK 目录（每个子目录是一套安装）。候选以 bin/javac(.exe) 收敛，
+///与 find_jdk 的合法性校验同一标准，噪声目录（Program Files 全量枚举产物）
+///不再透传。
+void append_user_jdk_homes(std::vector<fs::path>& out)
 {
-    std::error_code ec;
-    fs::directory_iterator it(root, ec), end;
-    if (ec) return {};
-    while (it != end) {
-        std::error_code sub_ec;
-        if (it->is_directory(sub_ec)) {
-            fs::directory_iterator ed(it->path(), sub_ec), ed_end;
-            while (!sub_ec && ed != ed_end) {
-                const fs::path candidate =
-                    ed->path() / "VC" / "Auxiliary" / "Build" / "vcvarsall.bat";
-                if (file_exists(candidate)) return candidate;
-                std::error_code ed_ec;
-                ed.increment(ed_ec);
-                if (ed_ec) break;
+    fs::path base = user_home();
+    if (base.empty()) return;
+    base /= ".jdk";
+    if (!detail::dir_exists(base)) return;
+    if (!detail::pick_executable(base / "bin", "javac").empty()) out.push_back(base);
+
+    for (const auto& child : detail::child_directories(base)) {
+        if (!detail::pick_executable(child / "bin", "javac").empty())
+            out.push_back(child);
+    }
+}
+
+#ifdef _WIN32
+
+///逻辑盘符根列表。GetLogicalDriveStrings 精确返回存在的盘符，
+///避免逐字母盲探不存在的驱动器；盘符恒为 ASCII，无编码问题。
+std::vector<fs::path> logical_drives()
+{
+    std::vector<fs::path> drives;
+    char buffer[512];
+    const UINT count = ::GetLogicalDriveStringsA(sizeof(buffer) - 1, buffer);
+    if (count == 0 || count >= sizeof(buffer)) return drives;
+    for (const char* p = buffer; *p != '\0'; p += std::strlen(p) + 1)
+        drives.emplace_back(p);
+    return drives;
+}
+
+///各盘 Program Files / Program Files (x86) 下的一级与二级子目录。
+///发行商目录名随发布演进（Java/Eclipse Adoptium/Microsoft/…），与 VS 版本目录
+///同一理由不维护静态清单；两层深度覆盖「Program Files/<厂商>/<jdk>」与
+///「Program Files/<jdk>」两种形态。候选以 bin/javac(.exe) 收敛：全量枚举产物
+///里的非 JDK 目录（7-Zip/CMake 等）不透传，find_jdk 侧校验保留（幂等）。
+void append_program_files_homes(std::vector<fs::path>& out)
+{
+    const char* names[] = {"Program Files", "Program Files (x86)"};
+    for (const fs::path& drive : logical_drives()) {
+        for (const char* name : names) {
+            const fs::path root = drive / name;
+            if (!detail::dir_exists(root)) continue;
+            for (const auto& first : detail::child_directories(root)) {
+                if (detail::pick_executable(first / "bin", "javac").empty()) continue;
+                out.push_back(first);
+                for (const auto& second : detail::child_directories(first)) {
+                    if (detail::pick_executable(second / "bin", "javac").empty()) continue;
+                    out.push_back(second);
+                }
             }
         }
-        std::error_code inc_ec;
-        it.increment(inc_ec);
-        if (inc_ec) break;
     }
-    return {};
+}
+
+#endif   //_WIN32
+
+std::string trim_copy(std::string s)
+{
+    const auto is_space = [](unsigned char c) { return std::isspace(c) != 0; };
+    size_t begin = 0;
+    while (begin < s.size() && is_space(s[begin])) ++begin;
+    size_t end = s.size();
+    while (end > begin && is_space(s[end - 1])) --end;
+    return s.substr(begin, end - begin);
+}
+
+///release 行 KEY="value" 解析填入 JavaInfo；值按 UTF-8 字节透传不转码。
+void apply_release_line(const std::string& line, JavaInfo& info)
+{
+    const auto eq = line.find('=');
+    if (eq == std::string::npos) return;
+    std::string key   = trim_copy(line.substr(0, eq));
+    std::string value = trim_copy(line.substr(eq + 1));
+    if (value.size() >= 2 && value.front() == '"' && value.back() == '"')
+        value = value.substr(1, value.size() - 2);
+    if      (key == "JAVA_VERSION")         info.java_version = std::move(value);
+    else if (key == "IMPLEMENTOR")          info.vendor = std::move(value);
+    else if (key == "IMPLEMENTOR_VERSION")  info.vendor_version = std::move(value);
+    else if (key == "JAVA_RUNTIME_VERSION") info.runtime_version = std::move(value);
+    else if (key == "OS_NAME")              info.os_name = std::move(value);
+    else if (key == "OS_ARCH")              info.os_arch = std::move(value);
 }
 
 }   //anonymous namespace
 
-bool command_exists(const std::string& command)
+std::vector<fs::path> default_jdk_homes()
 {
+    std::vector<fs::path> homes;
+    append_user_jdk_homes(homes);
 #ifdef _WIN32
-    return run_quiet("where " + command + " >nul 2>nul") == 0;
-#else
-    return run_quiet("command -v " + command + " >/dev/null 2>&1") == 0;
+    append_program_files_homes(homes);
 #endif
+    return homes;
 }
 
 JdkLocation find_jdk(const FindOptions& opts)
 {
-    JdkLocation loc;
-    std::string last_rejected_reason;
-
     std::vector<fs::path> candidates;
-    if (auto home = env_value("JAVA_HOME"); !home.empty()) candidates.emplace_back(home);
-    if (auto home = env_value("MJT_JDK_HOME"); !home.empty()) candidates.emplace_back(home);
-    for (const auto& fb : opts.fallback_homes) candidates.emplace_back(fb);
+    if (auto home = detail::env_path("JAVA_HOME"); !home.empty()) candidates.push_back(home);
+    if (auto home = detail::env_path("MJT_JDK_HOME"); !home.empty())
+        candidates.push_back(home);
+    candidates.insert(candidates.end(), opts.fallback_homes.begin(), opts.fallback_homes.end());
+    if (opts.search_default_homes) {
+        std::vector<fs::path> scanned = default_jdk_homes();
+        candidates.insert(candidates.end(), scanned.begin(), scanned.end());
+    }
 
-    //合法 JDK 的标志：bin/javac(.exe) 存在。
-    auto pick_exe = [](const fs::path& bin, const std::string& name) -> fs::path {
-        fs::path with_exe = bin / (name + ".exe");
-        if (file_exists(with_exe)) return with_exe;
-        fs::path plain = bin / name;
-        if (file_exists(plain)) return plain;
-        return {};
-    };
-
+    std::string last_rejected_reason;
     for (const auto& home : candidates) {
-        if (pick_exe(home / "bin", "javac").empty()) continue;
+        //合法 JDK 的标志：bin/javac(.exe) 存在。
+        if (detail::pick_executable(home / "bin", "javac").empty()) continue;
         JdkLocation candidate;
-        candidate.java_home       = home;
-        candidate.jdk_include     = home / "include";
+        candidate.java_home        = home;
+        candidate.jdk_include      = home / "include";
         candidate.jdk_include_plat = candidate.jdk_include / platform_include_subdir();
-        if (opts.require_jni_header && !file_exists(candidate.jdk_include / "jni.h")) {
-            last_rejected_reason =
-                "require_jni_header=true 但 " + (candidate.jdk_include / "jni.h").u8string() +
-                " 不存在";
+        if (opts.require_jni_header && !detail::file_exists(candidate.jdk_include / "jni.h")) {
+            last_rejected_reason = "require_jni_header=true 但 " +
+                                   (candidate.jdk_include / "jni.h").u8string() + " 不存在";
             continue;
         }
         candidate.available = true;
         return candidate;
     }
 
+    JdkLocation loc;
     if (!last_rejected_reason.empty()) {
         loc.reason = "未找到满足要求的 JDK：" + last_rejected_reason;
         return loc;
     }
     loc.reason = "未找到可用 JDK：JAVA_HOME/MJT_JDK_HOME";
     if (!opts.fallback_homes.empty()) loc.reason += "/fallback_homes";
+    loc.reason += opts.search_default_homes ? "/默认安装位置" : "";
     loc.reason += " 均未命中 bin/javac";
     return loc;
 }
@@ -133,159 +185,55 @@ JdkLocation find_jdk(const FindOptions& opts)
 fs::path jdk_executable(const JdkLocation& jdk, const std::string& name)
 {
     if (!jdk.available) return {};
-    fs::path bin = jdk.java_home / "bin";
-    fs::path with_exe = bin / (name + ".exe");
-    if (file_exists(with_exe)) return with_exe;
-    fs::path plain = bin / name;
-    if (file_exists(plain)) return plain;
-    return {};
+    return detail::pick_executable(jdk.java_home / "bin", name);
 }
 
-namespace {
-
-fs::path vcvars_all_from_vctools(const std::string& value)
+ca::StatusResult<JavaInfo> java_info(const fs::path& jdk_home)
 {
-    if (value.empty()) return {};
-    fs::path tools  = value;
-    fs::path vc_root = tools.parent_path().parent_path().parent_path();
-    fs::path vcvars = vc_root / "Auxiliary" / "Build" / "vcvarsall.bat";
-    return file_exists(vcvars) ? vcvars : fs::path{};
-}
+    if (jdk_home.empty())
+        return ca::Err(ca::ErrStatus(ca::StatusCode::INVALID_ARGUMENT,
+                                     "java_info：jdk_home 为空"));
 
-const char* compiler_executable_name(CCompilerKind kind)
-{
-    switch (kind) {
-    case CCompilerKind::MSVC:  return "cl";
-    case CCompilerKind::GCC:   return "gcc";
-    case CCompilerKind::CLANG: return "clang";
-    case CCompilerKind::ZIG:   return "zig";
-    case CCompilerKind::AUTO:  break;
+    const ca::fs::Path home(jdk_home);
+    const ca::fs::Path release = home / ca::fs::Path::from_utf8_lossy("release");
+    if (!ca::fs::FileUtil::is_file(release)) {
+        return ca::Err(ca::ErrStatus(ca::StatusCode::NOT_FOUND,
+                                     "未找到 " + release.to_utf8_lossy() +
+                                         "（JDK 9+ 与主流发行版均有该元数据文件，老 JDK 8 套件可能缺失）"));
     }
-    return "";
-}
 
-}   //anonymous namespace
-
-fs::path find_vcvars_all()
-{
-#ifdef _WIN32
-    if (auto from_env = vcvars_all_from_vctools(env_value("VCToolsInstallDir")); !from_env.empty())
-        return from_env;
-
-    std::vector<fs::path> roots;
-    if (auto pf = env_value("ProgramFiles"); !pf.empty()) roots.emplace_back(pf);
-    if (auto pfx86 = env_value("ProgramFiles(x86)"); !pfx86.empty()) roots.emplace_back(pfx86);
-
-    const char* years[]    = {"2022", "2019", "2017"};
-    const char* editions[] = {"Community", "Professional", "Enterprise", "BuildTools"};
-    for (const auto& root : roots) {
-        for (const char* year : years) {
-            for (const char* edition : editions) {
-                fs::path vcvars = root / "Microsoft Visual Studio" / year / edition / "VC" /
-                                  "Auxiliary" / "Build" / "vcvarsall.bat";
-                if (file_exists(vcvars)) return vcvars;
-            }
+    //strip_bom：个别 JDK 的 release 文件带 UTF-8 BOM，先剥离再逐行解析。
+    if (auto content = ca::fs::FileUtil::read_all_text(release, /*strip_bom=*/true);
+        content.is_err()) {
+        return ca::Err(ca::ErrStatus(
+            ca::StatusCode::INTERNAL,
+            "读取 release 失败：" + release.to_utf8_lossy() + "：" +
+                ca::fs::to_string(content.unwrap_err())));
+    }
+    else {
+        JavaInfo info;
+        std::istringstream body(content.unwrap());
+        std::string line;
+        while (std::getline(body, line)) {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            apply_release_line(line, info);
         }
-        //静态清单未命中（如 VS 2026 起版本目录名不在清单内）→ 枚举兜底。
-        if (auto scanned = vcvars_by_enumerate(root / "Microsoft Visual Studio");
-            !scanned.empty())
-            return scanned;
+        //JAVA_VERSION 是版本信息的核心字段，缺失视为元数据损坏，不做部分成功。
+        if (info.java_version.empty())
+            return ca::Err(ca::ErrStatus(
+                ca::StatusCode::INTERNAL,
+                "release 文件未含 JAVA_VERSION：" + release.to_utf8_lossy()));
+        return ca::Ok(std::move(info));
     }
-    return {};
-#else
-    return {};
-#endif
 }
 
-NativeToolchain find_native_compiler(CCompilerKind requested)
+ca::StatusResult<JavaInfo> java_info(const JdkLocation& jdk)
 {
-    NativeToolchain tc;
-
-    if (requested != CCompilerKind::AUTO) {
-        tc.compiler = requested;
-        if (requested == CCompilerKind::MSVC) {
-            bool has_cl            = command_exists("cl");
-            bool has_configured_msvc = has_cl && !env_value("INCLUDE").empty();
-            fs::path vcvars         = find_vcvars_all();
-            if (has_configured_msvc || !vcvars.empty()) {
-                tc.vcvars_all = has_configured_msvc ? fs::path{} : vcvars;
-                tc.available = true;
-                return tc;
-            }
-            tc.reason = has_cl ? "MSVC 环境未配置且未找到 vcvarsall.bat"
-                              : "未找到 MSVC（cl 不在 PATH 且 vcvarsall.bat 未定位到）";
-            return tc;
-        }
-        if (command_exists(compiler_executable_name(requested))) {
-            tc.available = true;
-            return tc;
-        }
-        tc.reason = std::string("未在 PATH 找到 ") + compiler_executable_name(requested);
-        return tc;
-    }
-
-#ifdef _WIN32
-    bool has_cl            = command_exists("cl");
-    bool has_configured_msvc = has_cl && !env_value("INCLUDE").empty();
-    fs::path vcvars         = has_configured_msvc ? fs::path{} : find_vcvars_all();
-    bool has_vcvars_msvc    = !vcvars.empty();
-    if (has_configured_msvc || has_vcvars_msvc) {
-        tc.compiler  = CCompilerKind::MSVC;
-        tc.vcvars_all = vcvars;
-        tc.available = true;
-        return tc;
-    }
-    if (command_exists("clang")) {
-        tc.compiler  = CCompilerKind::CLANG;
-        tc.available = true;
-        return tc;
-    }
-    if (command_exists("gcc")) {
-        tc.compiler  = CCompilerKind::GCC;
-        tc.available = true;
-        return tc;
-    }
-    if (command_exists("zig")) {
-        tc.compiler  = CCompilerKind::ZIG;
-        tc.available = true;
-        return tc;
-    }
-#elif defined(__APPLE__)
-    if (command_exists("clang")) {
-        tc.compiler  = CCompilerKind::CLANG;
-        tc.available = true;
-        return tc;
-    }
-    if (command_exists("gcc")) {
-        tc.compiler  = CCompilerKind::GCC;
-        tc.available = true;
-        return tc;
-    }
-    if (command_exists("zig")) {
-        tc.compiler  = CCompilerKind::ZIG;
-        tc.available = true;
-        return tc;
-    }
-#else
-    if (command_exists("gcc")) {
-        tc.compiler  = CCompilerKind::GCC;
-        tc.available = true;
-        return tc;
-    }
-    if (command_exists("clang")) {
-        tc.compiler  = CCompilerKind::CLANG;
-        tc.available = true;
-        return tc;
-    }
-    if (command_exists("zig")) {
-        tc.compiler  = CCompilerKind::ZIG;
-        tc.available = true;
-        return tc;
-    }
-#endif
-
-    tc.reason = "未探测到可用的 C 编译器（MSVC/gcc/clang/Zig）";
-    return tc;
+    if (!jdk.available)
+        return ca::Err(ca::ErrStatus(
+            ca::StatusCode::INVALID_ARGUMENT,
+            "java_info：JdkLocation 未定位到 JDK（" + jdk.reason + "）"));
+    return java_info(jdk.java_home);
 }
 
 }   //namespace jdk_finder

@@ -1,7 +1,9 @@
 -- libjdk_finder：JDK 与原生工具链（MSVC/gcc/clang）探测库（独立构建根）。
 --
 -- 依赖：
---   - libca（luiox-repo git 直连包）：core/fs 等基础面，公开头包含 libca 头。
+--   - libca（luiox-repo git 直连包）：core/fs/env。fs 提供 Path 编码边界与
+--     FileUtil 枚举，env 提供跨平台 UTF-8 环境变量读取；公开头包含 libca 头
+--     （core/status.hpp，java_info 的 Result 返回）。
 --   - gtest（xrepo，仅 --with_tests=y；本仓暂无 unittest 目标）。
 --
 -- 仓库注册：本文件不声明 add_repositories——包沙箱会继承宿主的仓库注册，
@@ -12,7 +14,7 @@
 set_languages("cxx17")
 add_rules("mode.debug", "mode.release")
 
-add_requires("libca 0.0.15", {configs = {modules = "core,fs"}})
+add_requires("libca 0.0.15", {configs = {modules = "core,fs,env"}})
 
 option("with_tests")
     set_default(false)
@@ -25,7 +27,8 @@ target("libjdk_finder")
     -- jdk_finder.hpp include libca 头；public 供消费方传递。
     add_packages("libca", {public = true})
     add_files("src/jdk_finder/*.cpp")
-    add_headerfiles("src/(jdk_finder/**.hpp)")
+    --公开头只装 jdk_finder.hpp：detail.hpp 是实现内部助手，不进安装面。
+    add_headerfiles("src/(jdk_finder/jdk_finder.hpp)")
     add_includedirs("src", {public = true})
     if is_plat("windows") then
         add_cxflags("/utf-8", {tools = "cl"})
