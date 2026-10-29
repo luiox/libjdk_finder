@@ -14,7 +14,7 @@
 set_languages("cxx17")
 add_rules("mode.debug", "mode.release")
 
-add_requires("libca 0.0.15", {configs = {modules = "core,fs,env"}})
+add_requires("libca 0.0.16", {configs = {modules = "core,fs,env"}})
 
 option("with_tests")
     set_default(false)
