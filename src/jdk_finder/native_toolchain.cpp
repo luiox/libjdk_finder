@@ -38,7 +38,9 @@ fs::path vcvars_by_enumerate(const fs::path& root)
 fs::path vcvars_all_from_vctools(const std::string& value)
 {
     if (value.empty()) return {};
-    fs::path tools   = value;
+    //ca::env::get 产出 UTF-8 字节，fs::path(std::string) 在 Windows 按本地代码页
+    //解字节（CJK 安装路径必乱），与 detail::env_path 同一纪律经 ca::fs::Path 转码。
+    fs::path tools   = ca::fs::Path::from_utf8_lossy(value).native();
     fs::path vc_root = tools.parent_path().parent_path().parent_path();
     fs::path vcvars  = vc_root / "Auxiliary" / "Build" / "vcvarsall.bat";
     return detail::file_exists(vcvars) ? vcvars : fs::path{};
@@ -100,25 +102,41 @@ fs::path find_vcvars_all()
 #endif
 }
 
+namespace {
+
+///MSVC 探测（requested=MSVC 与 AUTO 共用）：cl 在 PATH 且 INCLUDE 已配置视为
+///环境就绪（vcvars_all 留空）；否则定位 vcvarsall.bat 补足。不可用时
+///available=false 且 reason 填说明。
+NativeToolchain probe_msvc()
+{
+    NativeToolchain tc;
+    tc.compiler              = CCompilerKind::MSVC;
+    const bool has_cl        = command_exists("cl");
+    const bool has_configure = has_cl && !detail::env_value("INCLUDE").empty();
+    if (has_configure) {
+        tc.available = true;
+        return tc;
+    }
+    fs::path vcvars = find_vcvars_all();
+    if (!vcvars.empty()) {
+        tc.vcvars_all = vcvars;
+        tc.available  = true;
+        return tc;
+    }
+    tc.reason = has_cl ? "MSVC 环境未配置且未找到 vcvarsall.bat"
+                       : "未找到 MSVC（cl 不在 PATH 且 vcvarsall.bat 未定位到）";
+    return tc;
+}
+
+}   //anonymous namespace
+
 NativeToolchain find_native_compiler(CCompilerKind requested)
 {
     NativeToolchain tc;
 
     if (requested != CCompilerKind::AUTO) {
+        if (requested == CCompilerKind::MSVC) return probe_msvc();
         tc.compiler = requested;
-        if (requested == CCompilerKind::MSVC) {
-            bool has_cl              = command_exists("cl");
-            bool has_configured_msvc = has_cl && !detail::env_value("INCLUDE").empty();
-            fs::path vcvars          = find_vcvars_all();
-            if (has_configured_msvc || !vcvars.empty()) {
-                tc.vcvars_all = has_configured_msvc ? fs::path{} : vcvars;
-                tc.available  = true;
-                return tc;
-            }
-            tc.reason = has_cl ? "MSVC 环境未配置且未找到 vcvarsall.bat"
-                              : "未找到 MSVC（cl 不在 PATH 且 vcvarsall.bat 未定位到）";
-            return tc;
-        }
         if (command_exists(compiler_executable_name(requested))) {
             tc.available = true;
             return tc;
@@ -128,16 +146,7 @@ NativeToolchain find_native_compiler(CCompilerKind requested)
     }
 
 #ifdef _WIN32
-    bool has_cl              = command_exists("cl");
-    bool has_configured_msvc = has_cl && !detail::env_value("INCLUDE").empty();
-    fs::path vcvars          = has_configured_msvc ? fs::path{} : find_vcvars_all();
-    bool has_vcvars_msvc     = !vcvars.empty();
-    if (has_configured_msvc || has_vcvars_msvc) {
-        tc.compiler   = CCompilerKind::MSVC;
-        tc.vcvars_all = vcvars;
-        tc.available  = true;
-        return tc;
-    }
+    if (NativeToolchain msvc = probe_msvc(); msvc.available) return msvc;
     if (command_exists("clang")) {
         tc.compiler  = CCompilerKind::CLANG;
         tc.available = true;
