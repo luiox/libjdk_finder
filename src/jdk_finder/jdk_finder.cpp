@@ -79,8 +79,10 @@ std::vector<fs::path> logical_drives()
 ///各盘 Program Files / Program Files (x86) 下的一级与二级子目录。
 ///发行商目录名随发布演进（Java/Eclipse Adoptium/Microsoft/…），与 VS 版本目录
 ///同一理由不维护静态清单；两层深度覆盖「Program Files/<厂商>/<jdk>」与
-///「Program Files/<jdk>」两种形态。候选以 bin/javac(.exe) 收敛：全量枚举产物
-///里的非 JDK 目录（7-Zip/CMake 等）不透传，find_jdk 侧校验保留（幂等）。
+///「Program Files/<jdk>」两种形态——一级目录无论自身是否命中都下探二级，
+///Temurin/Oracle/Zulu 等默认布局（厂商目录本身不含 bin/javac）全靠这一步。
+///候选以 bin/javac(.exe) 收敛：全量枚举产物里的非 JDK 目录（7-Zip/CMake 等）
+///不透传，find_jdk 侧校验保留（幂等）。
 void append_program_files_homes(std::vector<fs::path>& out)
 {
     const char* names[] = {"Program Files", "Program Files (x86)"};
@@ -89,8 +91,8 @@ void append_program_files_homes(std::vector<fs::path>& out)
             const fs::path root = drive / name;
             if (!detail::dir_exists(root)) continue;
             for (const auto& first : detail::child_directories(root)) {
-                if (detail::pick_executable(first / "bin", "javac").empty()) continue;
-                out.push_back(first);
+                if (!detail::pick_executable(first / "bin", "javac").empty())
+                    out.push_back(first);
                 for (const auto& second : detail::child_directories(first)) {
                     if (detail::pick_executable(second / "bin", "javac").empty()) continue;
                     out.push_back(second);
