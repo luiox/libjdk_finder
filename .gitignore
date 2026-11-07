@@ -1,3 +1,5 @@
-//xmake / VS 构建产物
-.xmake/
 build/
+.xmake/
+doc/_build/
+doc/_apidoc/
+compile_commands.json
