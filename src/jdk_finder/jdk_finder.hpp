@@ -47,7 +47,7 @@ struct FindOptions
 {
     ///默认扫描之前的显式回落候选（按顺序尝试）。
     std::vector<fs::path> fallback_homes;
-    ///是否要求 <jdk>/include/jni.h 存在。默认 false：纯 JVM 用途不需要。
+    ///是否要求 \<jdk\>/include/jni.h 存在。默认 false：纯 JVM 用途不需要。
     ///native 编译（--compile）设 true。
     bool require_jni_header = false;
     ///JAVA_HOME / MJT_JDK_HOME / fallback_homes 均未命中时，是否继续扫描
@@ -65,7 +65,7 @@ std::vector<fs::path> default_jdk_homes();
 ///探测 JDK：JAVA_HOME → MJT_JDK_HOME → opts.fallback_homes →
 ///（opts.search_default_homes 时）default_jdk_homes()。
 ///命中需存在 bin/javac(.exe)（视为合法 JDK 安装的标志）；
-///require_jni_header=true 时额外校验 <jdk>/include/jni.h。
+///require_jni_header=true 时额外校验 \<jdk\>/include/jni.h。
 JdkLocation find_jdk(const FindOptions& opts = {});
 
 ///在已定位的 JDK 下解析可执行文件绝对路径（双探测 .exe / 无后缀）。
@@ -73,7 +73,7 @@ JdkLocation find_jdk(const FindOptions& opts = {});
 fs::path jdk_executable(const JdkLocation& jdk, const std::string& name);
 
 ///java 版本与发行商信息（issue #1）。
-///字段对应 <home>/release 的 JAVA_VERSION / IMPLEMENTOR /
+///字段对应 \<home\>/release 的 JAVA_VERSION / IMPLEMENTOR /
 ///IMPLEMENTOR_VERSION / JAVA_RUNTIME_VERSION / OS_NAME / OS_ARCH。
 ///字段值为空表示 release 未提供（如老发行版无 IMPLEMENTOR_VERSION）。
 struct JavaInfo
@@ -86,7 +86,7 @@ struct JavaInfo
     std::string os_arch;         //如 "x86_64"
 };
 
-///查询 java 版本/发行商等信息（issue #1）。解析 <home>/release（key="value"
+///查询 java 版本/发行商等信息（issue #1）。解析 \<home\>/release（key="value"
 ///行格式，零进程开销）。release 缺失或缺 JAVA_VERSION 时返回 Err。
 ///注：java.vm.name 等运行时才有的值此处不提供，需要时由消费方经
 ///jdk_executable 自行获取 java 可执行文件运行。

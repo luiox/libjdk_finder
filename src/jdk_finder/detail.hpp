@@ -21,7 +21,7 @@ inline bool dir_exists(const fs::path& p)
     return ca::fs::FileUtil::is_directory(ca::fs::Path(p));
 }
 
-///双探测可执行文件：先 <bin>/<name>.exe 再 <bin>/<name>。找不到返回空 path。
+///双探测可执行文件：先 \<bin\>/\<name\>.exe 再 \<bin\>/\<name\>。找不到返回空 path。
 inline fs::path pick_executable(const fs::path& bin, const std::string& name)
 {
     fs::path with_exe = bin / (name + ".exe");
