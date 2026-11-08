@@ -13,6 +13,8 @@ markdown 只承载流程文档（README 等）。
 这些指向不会腐烂。RST 里「``X`` 头注」指向微观层的 ``@defgroup`` 组名或头
 文件名。硬规则全文见 ``check_refs.py`` 模块 docstring。
 
+当前尚无独立规格页，toctree 自首批规格页落地起维护。
+
 .. toctree::
    :maxdepth: 2
    :caption: 设计与契约
