@@ -6,7 +6,7 @@
 --     （core/status.hpp，java_info 的 Result 返回）。
 --   - gtest（xrepo，仅 --with_tests=y；本仓暂无 unittest 目标）。
 --
--- 仓库注册：本文件不声明 add_repositories——包沙箱会继承宿主的仓库注册，
+-- 仓库注册：本文件不声明 add_repositories，包沙箱会继承宿主的仓库注册，
 -- 在工程内重复注册同名仓库会导致嵌套包构建时 remote 路径错乱。独立开发/CI
 -- 先执行：
 --   xmake repo --add luiox-repo https://github.com/luiox/luiox-repo.git

@@ -1,4 +1,4 @@
-//native_toolchain.cpp — 原生 C 编译器探测与 MSVC vcvarsall 定位
+//native_toolchain.cpp：原生 C 编译器探测与 MSVC vcvarsall 定位
 
 #include "jdk_finder/jdk_finder.hpp"
 #include "jdk_finder/detail.hpp"
@@ -20,7 +20,7 @@ int run_quiet(const std::string& command)
     return std::system(command.c_str());
 }
 
-///枚举 <root> 下「版本/发行版」两级子目录，找其下 vcvarsall.bat（清单兜底）。
+///枚举 <root> 下 版本/发行版 两级子目录，找其下 vcvarsall.bat（清单兜底）。
 /// VS 版本目录名随发布演进（2017/2019/2022/…/18），静态年份清单会滞后，
 /// 对目录名做开放枚举使其对未来 VS 版本免疫；命中即返回（不判新旧）。
 fs::path vcvars_by_enumerate(const fs::path& root)

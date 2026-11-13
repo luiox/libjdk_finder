@@ -1,4 +1,4 @@
-//jdk_finder.hpp — JDK 与原生工具链探测
+//jdk_finder.hpp：JDK 与原生工具链探测
 //
 //服务于需要定位 JDK（JNI 头）和 C 编译器（MSVC/gcc/clang/Zig）的产品功能与测试。
 //当前消费方：
@@ -123,7 +123,7 @@ NativeToolchain find_native_compiler(CCompilerKind requested = CCompilerKind::AU
 ///定位 VS 的 vcvarsall.bat（Windows）。
 ///顺序：VCToolsInstallDir 环境变量 → ProgramFiles/ProgramFiles(x86) 下
 ///Microsoft Visual Studio/{2022,2019,2017}/{Community,Professional,Enterprise,BuildTools}
-///扫描 → 该目录下「版本/发行版」开放式枚举兜底（覆盖未来 VS 版本目录名）。
+///扫描 → 该目录下 版本/发行版 开放式枚举兜底（覆盖未来 VS 版本目录名）。
 ///非 Windows 或未找到返回空 path。
 fs::path find_vcvars_all();
 

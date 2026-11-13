@@ -20,4 +20,4 @@ xmake build libjdk_finder
 
 ## License
 
-MIT —— 见 [LICENSE](LICENSE)。
+MIT，见 [LICENSE](LICENSE)。

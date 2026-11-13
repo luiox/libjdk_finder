@@ -1,4 +1,4 @@
-//detail.hpp — jdk_finder 内部共享助手。
+//detail.hpp：jdk_finder 内部共享助手。
 //不列入 add_headerfiles，不随公开头发布。
 
 #pragma once
@@ -49,7 +49,7 @@ inline fs::path env_path(const char* name)
 }
 
 ///目录一级子目录枚举。list_entries 走 libca fs，免手写错误码推进循环；
-///枚举失败（权限等）按「无子目录」处理：扫描列表为空不算错误。
+///枚举失败（权限等）按无子目录处理：扫描列表为空不算错误。
 inline std::vector<fs::path> child_directories(const fs::path& dir)
 {
     std::vector<fs::path> children;
